@@ -1,0 +1,14 @@
+{
+  "name": "router-dev",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix frontend install && npm --prefix backend install",
+    "dev": "npm --prefix frontend run dev",
+    "dev:routerdev": "npm --prefix frontend run dev:routerdev",
+    "dev:lan": "npm --prefix frontend run dev:lan",
+    "dev:legacy": "concurrently -n BACKEND,FRONTEND -c red,blue \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
