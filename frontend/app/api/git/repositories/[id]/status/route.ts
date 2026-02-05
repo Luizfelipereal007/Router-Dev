@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
-import { GitHubService } from "@/lib/github";
+import { GitHubCompareResponse, GitHubService } from "@/lib/github";
 import { GitLabService } from "@/lib/gitlab";
+import { Project } from "@/types/index";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(
   req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: idStr } = await ctx.params;
   const projectId = Number(idStr);
@@ -23,16 +24,19 @@ export async function POST(
   const db = getDb();
   const project = db
     .prepare("SELECT * FROM projects WHERE id = ?")
-    .get(projectId) as any;
+    .get(projectId) as Project | undefined;
 
   if (!project) {
-    return NextResponse.json({ error: "Projeto não encontrado" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Projeto não encontrado" },
+      { status: 404 },
+    );
   }
 
   if (!project.git_provider || !project.git_repo_id) {
     return NextResponse.json(
       { error: "Projeto não está vinculado a um repositório Git" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -46,49 +50,66 @@ export async function POST(
   if (!config) {
     return NextResponse.json(
       { error: "Token não configurado. Configure nas configurações primeiro." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
   const { token, gitlab_url } = config;
 
   try {
-    let repoInfo: any = {};
-    let lastCommit: any = null;
-    let compareResult: any = null;
+    let lastCommitSha = "";
+    let lastCommitMessage = "";
+    let lastCommitDate = "";
+    let repoDefaultBranch = "";
+    let repoUpdatedAt = "";
+    let compareResult:
+      | GitHubCompareResponse
+      | {
+          ahead_by: number;
+          behind_by: number;
+          status: "ahead" | "behind" | "identical" | "diverged";
+        }
+      | null = null;
 
     if (project.git_provider === "github") {
       const github = new GitHubService(token);
       const repo = await github.getRepository(project.git_repo_full_name!);
-      repoInfo = repo;
-      const branchToCheck = branch || project.git_default_branch || repo.default_branch;
-      lastCommit = await github.getLastCommit(
+      const branchToCheck =
+        branch || project.git_default_branch || repo.default_branch;
+      const commit = await github.getLastCommit(
         project.git_repo_full_name!,
-        branchToCheck
+        branchToCheck,
       );
+      if (commit) {
+        lastCommitSha = commit.sha;
+        lastCommitMessage = commit.commit.message;
+        lastCommitDate = commit.commit.author.date;
+      }
+      repoDefaultBranch = repo.default_branch;
+      repoUpdatedAt = repo.updated_at;
 
       if (project.git_is_fork && project.git_fork_of_full_name) {
-        const forkBranch = project.git_default_branch || repo.default_branch;
-        const parentRepo = await github.getRepository(project.git_fork_of_full_name);
+        const parentRepo = await github.getRepository(
+          project.git_fork_of_full_name,
+        );
         const parentBranch = parentRepo.default_branch;
-        
-        // Comparar do ponto de vista do fork:
-        // base = branch do fork, head = branch do repositório original
-        // ahead_by = commits no fork que não estão no original
-        // behind_by = commits no original que não estão no fork
+
+        // Usar a branch selecionada para comparação
+        // Sintaxe cross-repo: owner:branch para comparar branches de repositórios diferentes
         try {
           compareResult = await github.compareBranches(
             project.git_repo_full_name!,
-            forkBranch,
-            `${project.git_fork_of_full_name.split("/")[0]}:${parentBranch}`
+            branchToCheck,
+            `${project.git_fork_of_full_name.split("/")[0]}:${parentBranch}`,
           );
         } catch (error) {
+          console.error("Erro na comparação de branches:", error);
           // Se falhar, tenta comparar do repositório original
           try {
             const result = await github.compareBranches(
               project.git_fork_of_full_name,
               parentBranch,
-              `${project.git_repo_full_name!.split("/")[0]}:${forkBranch}`
+              `${project.git_repo_full_name!.split("/")[0]}:${branchToCheck}`,
             );
             // Inverter os valores: o que está ahead no original é behind no fork
             compareResult = {
@@ -97,45 +118,57 @@ export async function POST(
               status: result.status,
             };
           } catch (e) {
-            // Se ainda falhar, deixa como null
+            console.error("Erro na segunda tentativa de comparação:", e);
             compareResult = null;
           }
         }
       }
     } else if (project.git_provider === "gitlab") {
-      const gitlab = new GitLabService(token, gitlab_url || "https://gitlab.com");
-      const repo = await gitlab.getRepository(project.git_repo_id);
-      repoInfo = repo;
-      lastCommit = await gitlab.getLastCommit(
-        project.git_repo_id,
-        project.git_default_branch || repo.default_branch
+      const gitlab = new GitLabService(
+        token,
+        gitlab_url || "https://gitlab.com",
       );
+      const repo = await gitlab.getRepository(project.git_repo_id);
+      const commit = await gitlab.getLastCommit(
+        project.git_repo_id,
+        project.git_default_branch || repo.default_branch,
+      );
+      if (commit) {
+        lastCommitSha = commit.id;
+        lastCommitMessage = commit.message;
+        lastCommitDate = commit.committed_date;
+      }
+      repoDefaultBranch = repo.default_branch;
+      repoUpdatedAt = repo.last_activity_at;
 
       if (project.git_is_fork && project.git_fork_of_full_name) {
-        const parentRepo = await gitlab.getRepository(project.git_fork_of_full_name);
-        const forkBranch = branch || project.git_default_branch || repo.default_branch;
+        const parentRepo = await gitlab.getRepository(
+          project.git_fork_of_full_name,
+        );
+        const forkBranch =
+          branch || project.git_default_branch || repo.default_branch;
         const parentBranch = parentRepo.default_branch;
-        
+
         // Comparar: from é o repositório original, to é o fork
         compareResult = await gitlab.compareBranches(
           project.git_repo_id,
           parentBranch,
-          forkBranch
+          forkBranch,
         );
       }
     }
 
     // Atualizar informações no banco
     const updates: string[] = [];
-    const values: any[] = [];
+    const values: (string | number | null)[] = [];
 
-    if (lastCommit) {
+    if (lastCommitSha) {
       updates.push("git_last_commit_sha = ?");
-      values.push(lastCommit.sha || lastCommit.id);
+      values.push(lastCommitSha);
       updates.push("git_last_commit_message = ?");
-      values.push(lastCommit.commit?.message || lastCommit.message);
+      values.push(lastCommitMessage);
       updates.push("git_last_commit_date = ?");
-      values.push(lastCommit.commit?.author?.date || lastCommit.committed_date);
+      values.push(lastCommitDate);
     }
 
     if (compareResult) {
@@ -149,23 +182,25 @@ export async function POST(
 
     if (updates.length > 0) {
       values.push(projectId);
-      db.prepare(
-        `UPDATE projects SET ${updates.join(", ")} WHERE id = ?`
-      ).run(...values);
+      db.prepare(`UPDATE projects SET ${updates.join(", ")} WHERE id = ?`).run(
+        ...values,
+      );
     }
 
     return NextResponse.json({
-      lastCommit,
       compareResult,
       repoInfo: {
-        default_branch: repoInfo.default_branch,
-        updated_at: repoInfo.updated_at || repoInfo.last_activity_at,
+        default_branch: repoDefaultBranch,
+        updated_at: repoUpdatedAt,
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     return NextResponse.json(
-      { error: error.message || "Erro ao verificar status" },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error ? error.message : "Erro ao verificar status",
+      },
+      { status: 500 },
     );
   }
 }
