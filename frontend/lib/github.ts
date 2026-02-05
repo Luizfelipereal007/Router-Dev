@@ -131,28 +131,49 @@ export class GitHubService {
   }
 
   async syncFork(fullName: string, branch: string = "main"): Promise<void> {
-    // GitHub não permite sincronizar forks diretamente via API sem usar merge
-    // Vamos usar a API de merge para sincronizar
+    // Verifica se é um fork
     const repo = await this.getRepository(fullName);
     
     if (!repo.fork || !repo.parent) {
       throw new Error("Repositório não é um fork");
     }
 
-    // Buscar o último commit da branch principal do repositório original
-    const parentCommit = await this.getLastCommit(repo.parent.full_name, repo.parent.default_branch);
-    
-    if (!parentCommit) {
-      throw new Error("Não foi possível obter o último commit do repositório original");
+    // Extrai owner e repo do fullName
+    const [owner, repoName] = fullName.split("/");
+
+    // Faz a requisição para sincronizar o fork com o upstream
+    const response = await fetch(
+      `${this.baseUrl}/repos/${owner}/${repoName}/merge-upstream`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `token ${this.token}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ branch }),
+      }
+    );
+
+    // Trata os diferentes códigos de resposta
+    if (response.ok) {
+      // 200 OK: Fork sincronizado com sucesso
+      return;
     }
 
-    // Criar uma branch de atualização e fazer merge
-    // Nota: GitHub não permite merge direto via API sem criar uma PR ou branch
-    // Por enquanto, vamos apenas retornar sucesso e deixar o usuário fazer manualmente
-    // ou implementar via GitHub Actions/workflows
-    throw new Error(
-      "Sincronização automática de forks requer GitHub Actions ou merge manual. " +
-      "Use a interface web do GitHub para sincronizar o fork."
-    );
+    const error = await response.json().catch(() => ({ message: response.statusText }));
+
+    if (response.status === 409) {
+      // 409 Conflict: Conflitos de merge
+      throw new Error(
+        "Conflitos de merge detectados. Resolva os conflitos manualmente ou crie um Pull Request."
+      );
+    }
+
+    if (response.status === 422) {
+      // 422 Unprocessable Entity: Fork já está atualizado
+      return;
+    }
+
+    throw new Error(`Erro ao sincronizar fork: ${error.message || response.statusText}`);
   }
 }
