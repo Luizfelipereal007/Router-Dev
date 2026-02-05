@@ -9,7 +9,16 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const db = getDb();
   const projects = db
-    .prepare("SELECT id, name, path FROM projects ORDER BY name")
+    .prepare(`
+      SELECT 
+        id, name, path,
+        git_provider, git_repo_id, git_repo_full_name, git_repo_url,
+        git_is_fork, git_fork_of_full_name, git_fork_of_url,
+        git_default_branch, git_last_commit_sha, git_last_commit_message, git_last_commit_date,
+        git_ahead_count, git_behind_count, git_sync_status
+      FROM projects 
+      ORDER BY name
+    `)
     .all() as ProjectRow[];
 
   const links = db.prepare("SELECT * FROM links ORDER BY id").all() as LinkRow[];
@@ -21,7 +30,11 @@ export async function GET() {
   }, {});
 
   return NextResponse.json(
-    projects.map((p) => ({ ...p, links: linksByProject[p.id] ?? [] })),
+    projects.map((p) => ({
+      ...p,
+      links: linksByProject[p.id] ?? [],
+      git_is_fork: p.git_is_fork === 1,
+    })),
     { headers: { "Cache-Control": "no-store" } }
   );
 }
@@ -37,7 +50,8 @@ export async function POST(req: Request) {
   }
 
   const { name, path } = parse.data;
-  if (!fs.existsSync(path)) {
+  // Projetos locais precisam ter path válido, mas projetos Git podem ter path vazio
+  if (path && !fs.existsSync(path)) {
     return NextResponse.json({ error: "Caminho do projeto não existe" }, { status: 400 });
   }
 
