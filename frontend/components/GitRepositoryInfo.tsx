@@ -25,6 +25,11 @@ export default function GitRepositoryInfo({
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
 
+  // Estados locais para o status de sincronização do fork
+  const [syncStatus, setSyncStatus] = useState(project.git_sync_status || null);
+  const [aheadCount, setAheadCount] = useState(project.git_ahead_count || 0);
+  const [behindCount, setBehindCount] = useState(project.git_behind_count || 0);
+
   const loadBranches = async () => {
     if (!project.git_provider || !project.git_repo_id) {
       setError("Projeto não está vinculado a um repositório Git válido.");
@@ -101,8 +106,13 @@ export default function GitRepositoryInfo({
         );
       }
 
-      if (typeof window !== "undefined") {
-        window.location.reload();
+      const data = await response.json();
+
+      // Atualiza os estados locais com os dados retornados pela API
+      if (data.compareResult) {
+        setSyncStatus(data.compareResult.status);
+        setAheadCount(data.compareResult.ahead_by || 0);
+        setBehindCount(data.compareResult.behind_by || 0);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erro ao verificar status");
@@ -147,9 +157,9 @@ export default function GitRepositoryInfo({
   };
 
   const getSyncStatusBadge = () => {
-    if (!project.git_sync_status) return null;
+    if (!syncStatus) return null;
 
-    const status = project.git_sync_status;
+    const status = syncStatus;
     const colors: Record<string, string> = {
       synced: "badge-success",
       ahead: "badge-primary",
@@ -269,13 +279,11 @@ export default function GitRepositoryInfo({
             <div className="flex items-center gap-2 mb-3">
               <span className="badge badge-neutral">Fork</span>
               {getSyncStatusBadge()}
-              {(project.git_ahead_count !== null &&
-                project.git_ahead_count !== undefined) ||
-              (project.git_behind_count !== null &&
-                project.git_behind_count !== undefined) ? (
+              {(syncStatus !== null && syncStatus !== undefined) ||
+              (aheadCount !== null && aheadCount !== undefined) ||
+              (behindCount !== null && behindCount !== undefined) ? (
                 <span className="text-sm text-slate-600">
-                  {project.git_ahead_count || 0} commits à frente,{" "}
-                  {project.git_behind_count || 0} atrás
+                  {aheadCount} commits à frente, {behindCount} atrás
                 </span>
               ) : null}
             </div>
