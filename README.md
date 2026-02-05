@@ -16,6 +16,12 @@ Dashboard local para desenvolvedores gerenciar projetos e seus links de acesso.
 - ✅ Links do tipo TERMINAL (dropdown com opções: abrir projeto no VS Code ou acessar URL)
 - ✅ Sidebar com navegação entre projetos
 - ✅ Interface responsiva e moderna
+- ✅ **Integração com GitHub e GitLab via API**
+- ✅ **Listar repositórios do GitHub/GitLab**
+- ✅ **Identificar repositórios fork e seus originais**
+- ✅ **Verificar status de sincronização (commits ahead/behind)**
+- ✅ **Exibir informações do repositório (branch padrão, último commit)**
+- ✅ **Sincronizar forks diretamente pela interface**
 
 ## 🛠️ Instalação
 
@@ -80,6 +86,28 @@ Links do tipo TERMINAL têm um dropdown especial com duas opções:
 - **Editar**: Clique no botão "Editar" ao lado do link
 - **Deletar**: Clique no botão "Deletar" ao lado do link
 
+### Vincular Repositório Git
+
+1. Abra um projeto existente
+2. Clique em "+ Vincular Repositório Git"
+3. Selecione o provedor (GitHub ou GitLab)
+4. Informe seu token de acesso:
+   - **GitHub**: Personal Access Token (ghp_...) com permissões de repositório
+   - **GitLab**: Personal Access Token (glpat-...) com permissões de API
+5. Clique em "Carregar Repositórios"
+6. Selecione o repositório desejado
+7. Clique em "Vincular"
+
+### Gerenciar Repositórios Fork
+
+Para repositórios que são forks:
+
+1. O sistema identifica automaticamente se é um fork e mostra o repositório original
+2. Use o botão "Verificar Status" para ver quantos commits estão ahead/behind
+3. Use o botão "Sincronizar Fork" para iniciar a sincronização:
+   - **GitHub**: Requer sincronização manual via interface web ou GitHub Actions
+   - **GitLab**: Cria automaticamente um Merge Request para sincronização
+
 ## 🗂️ Estrutura do Projeto
 
 ```
@@ -101,7 +129,13 @@ Router-Dev/
 │   │   ├── Sidebar.tsx       # Sidebar de navegação
 │   │   ├── LinkForm.tsx      # Formulário de links
 │   │   ├── LinkItem.tsx      # Item de link na lista
-│   │   └── TerminalDropdown.tsx # Dropdown para links TERMINAL
+│   │   ├── TerminalDropdown.tsx # Dropdown para links TERMINAL
+│   │   ├── GitRepositoryForm.tsx # Formulário para vincular repositório Git
+│   │   └── GitRepositoryInfo.tsx # Exibe informações do repositório Git
+│   ├── lib/
+│   │   ├── db.ts             # Configuração do banco de dados
+│   │   ├── github.ts         # Serviço de integração com GitHub API
+│   │   └── gitlab.ts         # Serviço de integração com GitLab API
 │   └── types/
 │       └── index.ts          # Tipos TypeScript
 └── README.md
@@ -124,11 +158,36 @@ Router-Dev/
 - `DELETE /links/:id` - Deleta um link
 - `POST /links/:id/terminal` - Executa `code .` no diretório do projeto
 
+### Repositórios Git
+
+- `GET /api/git/repositories?provider={github|gitlab}&token={token}` - Lista repositórios do provedor
+- `PUT /api/projects/:id/git` - Vincula um repositório Git a um projeto
+- `DELETE /api/projects/:id/git` - Desvincula o repositório Git de um projeto
+- `POST /api/git/repositories/:id/status` - Verifica status de sincronização do repositório
+- `POST /api/git/repositories/:id/sync` - Sincroniza um fork com o repositório original
+
 ## ⚙️ Configuração
 
 ### Variáveis de Ambiente
 
 Não é necessário configurar variáveis para a API (ela roda em `/api` no mesmo Next).
+
+### Tokens de Acesso
+
+Para usar as funcionalidades de integração com GitHub/GitLab, você precisará de tokens de acesso:
+
+#### GitHub
+1. Acesse https://github.com/settings/tokens
+2. Clique em "Generate new token (classic)"
+3. Selecione as permissões: `repo` (acesso completo aos repositórios)
+4. Copie o token gerado (formato: `ghp_...`)
+
+#### GitLab
+1. Acesse https://gitlab.com/-/user_settings/personal_access_tokens
+2. Crie um novo token com escopo: `api`
+3. Copie o token gerado (formato: `glpat-...`)
+
+**Nota**: Os tokens são solicitados apenas quando necessário e não são armazenados permanentemente.
 
 ## 📝 Notas
 
@@ -155,3 +214,14 @@ A pasta `backend/` (Express) pode ser desconsiderada agora — a aplicação pas
 ### Projeto não encontrado
 
 Verifique se o caminho do projeto está correto e existe no sistema de arquivos.
+
+### Erro ao vincular repositório Git
+
+- Verifique se o token de acesso está correto e tem as permissões necessárias
+- Para GitLab, certifique-se de que a URL da instância está correta (padrão: https://gitlab.com)
+- Verifique sua conexão com a internet
+
+### Erro ao sincronizar fork
+
+- **GitHub**: A sincronização automática de forks via API é limitada. Use a interface web do GitHub ou configure GitHub Actions
+- **GitLab**: Verifique se você tem permissão para criar Merge Requests no repositório
